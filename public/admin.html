@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Painel Administrativo - Cruzeiro</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <header class="header">
+        <h1>Painel Administrativo</h1>
+        <p>Upload de planilhas de mensalidades</p>
+    </header>
+
+    <div class="container admin-container">
+        <!-- Seleção de Tipo -->
+        <div class="upload-options">
+            <div class="upload-option selected" data-tipo="graduacao">
+                <h4>📚 Graduação</h4>
+                <p>Planilha com cursos de graduação</p>
+            </div>
+            <div class="upload-option" data-tipo="pos_graduacao">
+                <h4>🎓 Pós-Graduação</h4>
+                <p>Planilha com cursos de pós-graduação</p>
+            </div>
+        </div>
+
+        <!-- Área de Upload -->
+        <div class="upload-area" id="uploadArea">
+            <input 
+                type="file" 
+                id="fileInput" 
+                accept=".xls,.xlsx,.csv" 
+                style="display: none"
+            >
+            <h3>📁 Arraste o arquivo aqui</h3>
+            <p>ou clique para selecionar</p>
+            <p style="margin-top: 10px; font-size: 0.8rem; color: #999">
+                Formatos aceitos: .xls, .xlsx, .csv
+            </p>
+        </div>
+
+        <!-- Barra de Progresso -->
+        <div class="progress-bar" id="progressBar">
+            <div class="progress-bar-fill" id="progressFill"></div>
+        </div>
+
+        <!-- Mensagem -->
+        <div class="message" id="message"></div>
+
+        <!-- Histórico de Uploads -->
+        <h3 style="margin-top: 40px; margin-bottom: 16px">Histórico de Uploads</h3>
+        <div id="historyContainer">
+            <p style="color: #666">Carregando histórico...</p>
+        </div>
+    </div>
+
+    <!-- Link Voltar -->
+    <a href="/" class="admin-link" title="Voltar ao Sistema">🏠</a>
+
+    <script src="/js/admin.js"></script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+# Dependências
+/vendor
+/node_modules
+
+# Arquivos de ambiente
+.env
+
+# Dados temporários
+/data/*.tmp
+/data/uploads/
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode
+.idea
+
+# Logs
+*.log
