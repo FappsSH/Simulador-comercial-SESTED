@@ -172,34 +172,116 @@ body {
     line-height: 1.4;
 }
 
-.card-header .tipo-badge {
+.card-header-top {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.tipo-badge, .modalidade-badge {
     display: inline-block;
     background: rgba(255,255,255,0.2);
-    padding: 4px 10px;
+    padding: 3px 10px;
     border-radius: 20px;
-    font-size: 0.75rem;
-    margin-top: 8px;
+    font-size: 0.7rem;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+}
+
+.modalidade-badge {
+    background: rgba(255,255,255,0.35);
+}
+
+.card-subinfo {
+    display: flex;
+    gap: 12px;
+    margin-top: 6px;
+    font-size: 0.8rem;
+    opacity: 0.85;
 }
 
 .card-body {
     padding: 20px;
 }
 
-.price-row {
+.price-main {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 12px;
-    padding-bottom: 12px;
+    margin-bottom: 10px;
+}
+
+.price-main.best-discount {
+    background: #f0fffe;
+    margin: 10px -20px -10px;
+    padding: 12px 20px;
+    border-top: 1px solid var(--border);
+}
+
+.card-expand-btn {
+    width: 100%;
+    margin-top: 16px;
+    padding: 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 0.85rem;
+    color: var(--accent);
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.card-expand-btn:hover {
+    background: #f0fffe;
+    border-color: var(--accent);
+}
+
+.card-canais {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease;
+}
+
+.card-canais.open {
+    max-height: 600px;
+    margin-top: 12px;
+}
+
+.canais-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+}
+
+.canais-table th {
+    text-align: left;
+    padding: 8px 6px;
+    border-bottom: 2px solid var(--border);
+    color: var(--text-light);
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+}
+
+.canais-table td {
+    padding: 8px 6px;
     border-bottom: 1px solid var(--border);
 }
 
-.price-row:last-child {
+.canais-table tr:last-child td {
     border-bottom: none;
-    margin-bottom: 0;
-    padding-bottom: 0;
+}
+
+.canais-table .canal-nome {
+    font-weight: 500;
+    max-width: 140px;
+    word-wrap: break-word;
+}
+
+.canais-table .canal-valor {
+    color: var(--accent);
+    font-weight: 600;
 }
 
 .price-label {
@@ -218,24 +300,7 @@ body {
 
 .price-desconto {
     color: var(--accent);
-}
-
-.discount-badge {
-    display: inline-block;
-    background: linear-gradient(135deg, var(--secondary) 0%, var(--accent) 100%);
-    color: white;
-    padding: 6px 12px;
-    border-radius: 20px;
-    font-size: 0.8rem;
-    font-weight: 500;
-    margin-top: 12px;
-}
-
-.card-footer {
-    background: #f8f9fa;
-    padding: 12px 20px;
-    font-size: 0.8rem;
-    color: var(--text-light);
+    font-size: 1.2rem;
 }
 
 /* Loading */

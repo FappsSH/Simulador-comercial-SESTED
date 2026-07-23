@@ -24,7 +24,7 @@ if (!isset($_FILES['arquivo'])) {
 $tipo = $_POST['tipo'] ?? '';
 if (!in_array($tipo, ['graduacao', 'pos_graduacao'])) {
     http_response_code(400);
-    echo json_encode(['error' => 'Tipo inválido. Use: graduacao ou pos_graduacao']);
+    echo json_encode(['error' => 'Tipo inválido']);
     exit;
 }
 
@@ -51,32 +51,57 @@ try {
     unlink($tempFile);
 
     if (empty($dados)) {
-        throw new Exception('Nenhum dado encontrado na planilha. Verifique se a primeira linha contém os cabeçalhos das colunas.');
+        throw new Exception('Nenhum dado encontrado na planilha.');
     }
 
-    desativarCursos($tipo);
+    // Limpa dados antigos do tipo
+    supabaseRequest('POST', 'cursos?tipo=eq.' . $tipo, ['ativo' => false], true);
 
-    $cursosParaInserir = array_map(function($item) use ($tipo) {
-        return [
+    // Agrupa por curso + modalidade para criar registros únicos
+    $cursosAgrupados = agruparCursos($dados);
+
+    // Insere cursos
+    $cursosInseridos = 0;
+    $canaisInseridos = 0;
+
+    foreach ($cursosAgrupados as $chave => $curso) {
+        // Insere curso
+        $resultadoCurso = supabaseRequest('POST', 'cursos', [
             'tipo' => $tipo,
-            'nome_curso' => $item['nome'],
-            'duracao' => $item['duracao'] ?? '',
-            'valor_integral' => $item['valor_integral'],
-            'valor_com_desconto' => $item['valor_com_desconto'] ?? null,
-            'desconto_aplicado' => $item['desconto'] ?? '',
-            'percentual_desconto' => $item['percentual'] ?? null,
-            'observacoes' => $item['observacoes'] ?? '',
+            'nome_curso' => $curso['nome'],
+            'duracao' => $curso['duracao'],
+            'grau' => $curso['grau'],
+            'modalidade' => $curso['modalidade'],
+            'valor_integral' => $curso['valor_integral'],
             'ativo' => true
-        ];
-    }, $dados);
+        ], true);
 
-    $resultado = insertCursos($cursosParaInserir);
-    registrarUpload($arquivo['name'], $tipo, count($dados));
+        if ($resultadoCurso['status'] === 201 && !empty($resultadoCurso['data'])) {
+            $cursoId = $resultadoCurso['data'][0]['id'];
+            $cursosInseridos++;
+
+            // Insere canais de desconto
+            foreach ($curso['canais'] as $canal) {
+                supabaseRequest('POST', 'canais_desconto', [
+                    'curso_id' => $cursoId,
+                    'canal' => $canal['canal'],
+                    'percentual_desconto' => $canal['percentual'],
+                    'valor_com_desconto' => $canal['valor_desconto'],
+                    'regressao_2sem' => $canal['regressao_2sem'],
+                    'regressao_demais' => $canal['regressao_demais']
+                ], true);
+                $canaisInseridos++;
+            }
+        }
+    }
+
+    registrarUpload($arquivo['name'], $tipo, $cursosInseridos);
 
     echo json_encode([
         'success' => true,
-        'message' => count($dados) . ' cursos importados com sucesso',
-        'registros' => count($dados)
+        'message' => "$cursosInseridos cursos importados com $canaisInseridos canais de desconto",
+        'cursos' => $cursosInseridos,
+        'canais' => $canaisInseridos
     ]);
 
 } catch (Exception $e) {
@@ -85,67 +110,88 @@ try {
 }
 
 /**
- * Normaliza nome da coluna para lowercase sem acentos
+ * Agrupa linhas por curso + modalidade
  */
-function normalizarColuna($texto) {
-    $texto = mb_strtolower(trim($texto), 'UTF-8');
-    $texto = str_replace(
-        ['á','à','â','ã','ä','å','é','è','ê','ë','í','ì','î','ï','ó','ò','ô','õ','ö','ø','ú','ù','û','ü','ý','ñ','ç','ª','º'],
-        ['a','a','a','a','a','a','e','e','e','e','i','i','i','i','o','o','o','o','o','o','u','u','u','u','y','n','c','',''],
-        $texto
-    );
-    return $texto;
-}
+function agruparCursos($dados) {
+    $agrupados = [];
 
-/**
- * Busca valor em item usando múltiplos nomes possíveis de coluna
- */
-function buscarColuna($item, $opcoes) {
-    foreach ($opcoes as $opcao) {
-        $chave = normalizarColuna($opcao);
-        if (isset($item[$chave]) && $item[$chave] !== '' && $item[$chave] !== null) {
-            return $item[$chave];
+    foreach ($dados as $row) {
+        $chave = normalizarTexto($row['curso']) . '|' . normalizarTexto($row['modalidade']);
+
+        if (!isset($agrupados[$chave])) {
+            $agrupados[$chave] = [
+                'nome' => $row['curso'],
+                'duracao' => $row['duracao'],
+                'grau' => $row['grau'],
+                'modalidade' => $row['modalidade'],
+                'valor_integral' => $row['preco_siaa'],
+                'canais' => []
+            ];
+        }
+
+        // Adiciona canal se não existir
+        $canalExiste = false;
+        foreach ($agrupados[$chave]['canais'] as $c) {
+            if ($c['canal'] === $row['canal']) {
+                $canalExiste = true;
+                break;
+            }
+        }
+
+        if (!$canalExiste && !empty($row['canal'])) {
+            $agrupados[$chave]['canais'][] = [
+                'canal' => $row['canal'],
+                'percentual' => $row['desconto'],
+                'valor_desconto' => $row['valor_com_desconto'],
+                'regressao_2sem' => $row['regressao_2sem'],
+                'regressao_demais' => $row['regressao_demais']
+            ];
         }
     }
-    return null;
+
+    return $agrupados;
 }
 
 /**
- * Converte valor monetário brasileiro para float
+ * Normaliza texto para comparação
  */
-function parseValorMonetario($valor) {
+function normalizarTexto($texto) {
+    $texto = mb_strtolower(trim($texto), 'UTF-8');
+    return str_replace(
+        ['á','à','â','ã','ä','å','é','è','ê','ë','í','ì','î','ï','ó','ò','ô','õ','ö','ø','ú','ù','û','ü','ý','ñ','ç'],
+        ['a','a','a','a','a','a','e','e','e','e','i','i','i','i','o','o','o','o','o','o','u','u','u','u','y','n','c'],
+        $texto
+    );
+}
+
+/**
+ * Converte valor monetário para float
+ */
+function parseValor($valor) {
     if ($valor === null || $valor === '') return 0;
     if (is_numeric($valor)) return (float) $valor;
 
     $valor = (string) $valor;
     $valor = preg_replace('/[^0-9,.]/', '', $valor);
-
     if ($valor === '') return 0;
 
-    // Detecta formato: "1.200,50" (brasileiro) vs "1,200.50" (inglês)
     $temVirgula = strpos($valor, ',') !== false;
     $temPonto = strpos($valor, '.') !== false;
 
     if ($temVirgula && $temPonto) {
-        // Ambos presentes: qual vem por último?
         $ultimaVirgula = strrpos($valor, ',');
         $ultimoPonto = strrpos($valor, '.');
         if ($ultimaVirgula > $ultimoPonto) {
-            // Formato brasileiro: 1.200,50
             $valor = str_replace('.', '', $valor);
             $valor = str_replace(',', '.', $valor);
         } else {
-            // Formato inglês: 1,200.50
             $valor = str_replace(',', '', $valor);
         }
     } elseif ($temVirgula) {
-        // Só vírgula: pode ser "1200,50" ou "1200"
         $partes = explode(',', $valor);
         if (count($partes) === 2 && strlen($partes[1]) <= 2) {
-            // provavelmente decimal: 1200,50
             $valor = str_replace(',', '.', $valor);
         } else {
-            // milhares: 1,200 ou só remove
             $valor = str_replace(',', '', $valor);
         }
     }
@@ -154,68 +200,7 @@ function parseValorMonetario($valor) {
 }
 
 /**
- * Detecta automaticamente qual coluna mapeia para cada campo
- */
-function detectarMapeamento($cabecalho) {
-    $mapa = [
-        'nome' => null,
-        'duracao' => null,
-        'valor_integral' => null,
-        'valor_com_desconto' => null,
-        'desconto' => null,
-        'percentual' => null,
-        'observacoes' => null,
-    ];
-
-    foreach ($cabecalho as $idx => $col) {
-        $c = normalizarColuna($col);
-
-        // Nome do curso
-        if ($mapa['nome'] === null && preg_match('/(nome|curso|disciplina|graduacao|habilitacao|iplina|programa)/', $c)) {
-            $mapa['nome'] = $idx;
-        }
-
-        // Duração
-        if ($mapa['duracao'] === null && preg_match('/(duracao|duracao|periodo|semest|ano|tempo)/', $c)) {
-            $mapa['duracao'] = $idx;
-        }
-
-        // Valor integral
-        if ($mapa['valor_integral'] === null && preg_match('/(integral|cheio|cheia|normal|total|bruto|sem.*(desc|bolsa|cota)|valor.*(mensal|original|base))/i', $c)) {
-            $mapa['valor_integral'] = $idx;
-        }
-
-        // Valor com desconto
-        if ($mapa['valor_com_desconto'] === null && preg_match('/(com.*(desc|bolsa|cota)|descont|bolsa|cota|promocion|oferta|liquido|final|real|pago)/i', $c)) {
-            $mapa['valor_com_desconto'] = $idx;
-        }
-
-        // Se só tem uma coluna de "valor", usa como integral
-        if ($mapa['valor_integral'] === null && preg_match('/(valor|mensalidade|preco|price|fee| mensal)/i', $c)) {
-            $mapa['valor_integral'] = $idx;
-        }
-
-        // Desconto aplicado
-        if ($mapa['desconto'] === null && preg_match('/(desconto|bolsa|cota|beneficio|incentivo|tipo.*(desc|bolsa|cota))/i', $c)) {
-            $mapa['desconto'] = $idx;
-        }
-
-        // Percentual
-        if ($mapa['percentual'] === null && preg_match('/(percent|%)|(pct)/i', $c)) {
-            $mapa['percentual'] = $idx;
-        }
-
-        // Observações
-        if ($mapa['observacoes'] === null && preg_match('/(obs|observ|nota|comment|detalhe|info|complement|regra|condicao)/i', $c)) {
-            $mapa['observacoes'] = $idx;
-        }
-    }
-
-    return $mapa;
-}
-
-/**
- * Processa arquivo Excel (.xls / .xlsx)
+ * Processa planilha Excel
  */
 function processarExcel($arquivo) {
     require_once __DIR__ . '/../vendor/autoload.php';
@@ -228,103 +213,38 @@ function processarExcel($arquivo) {
 
     if (empty($allData)) return [];
 
-    // Encontra a primeira linha que parece ser cabeçalho
-    $cabecalhoIdx = null;
-    $cabecalho = null;
-
-    foreach ($allData as $rowIdx => $row) {
-        $valores = array_filter($row, function($v) { return $v !== null && $v !== ''; });
-        if (count($valores) >= 2) {
-            // Verifica se parece cabeçalho (tem palavras, não só números)
-            $temTexto = false;
-            foreach ($valores as $v) {
-                if (!is_numeric($v) && !preg_match('/^R\$/', (string)$v)) {
-                    $temTexto = true;
-                    break;
-                }
-            }
-            if ($temTexto) {
-                $cabecalhoIdx = $rowIdx;
-                $cabecalho = array_values($row);
-                break;
-            }
-        }
-    }
-
-    if ($cabecalho === null) {
-        throw new Exception('Não foi possível encontrar cabeçalhos na planilha. A primeira linha deve conter nomes das colunas.');
-    }
-
-    // Normaliza cabeçalho
-    $cabecalhoNormalizado = array_map(function($h) {
-        return normalizarColuna((string)$h);
-    }, $cabecalho);
-
-    // Detecta mapeamento automático
-    $mapa = detectarMapeamento($cabecalho);
-
-    if ($mapa['nome'] === null) {
-        throw new Exception('Não foi possível identificar a coluna com o nome do curso. Colunas encontradas: ' . implode(', ', $cabecalho));
-    }
-
-    if ($mapa['valor_integral'] === null) {
-        throw new Exception('Não foi possível identificar a coluna com o valor. Colunas encontradas: ' . implode(', ', $cabecalho));
-    }
+    // Cabeçalho esperado:
+    // CÓDIGO, CURSOS, DURAÇÃO, GRAU, SUBMODALIDADE, CANAL,
+    // PREÇO SIAA, DESCONTO 1 SEMESTRE, VALOR COM DESCONTO,
+    // REGRESSÃO A PARTIR DO 2 SEMESTRE, REGRESSÃO DEMAIS SEMESTRES, DATA, DATA FINAL CAMPANHA
 
     $result = [];
     $linhas = $sheet->toArray();
 
-    // Pula linhas até o cabeçalho
-    $inicio = $cabecalhoIdx !== null ? $cabecalhoIdx + 1 : 1;
-
-    for ($i = $inicio; $i < count($linhas); $i++) {
+    for ($i = 1; $i < count($linhas); $i++) {
         $row = $linhas[$i];
-        if (!$row) continue;
+        if (!$row || empty($row[1])) continue;
 
-        $nome = isset($row[$mapa['nome']]) ? trim((string)$row[$mapa['nome']]) : '';
-        if ($nome === '' || $nome === null) continue;
+        $preco = parseValor($row[6]);
+        if ($preco <= 0) continue;
 
-        // Pula linhas que parecem ser de filtro/resumo
-        if (preg_match('/(filtro|total|subtotal|soma|quantidade|qtd|nº|numero|cód)/i', $nome)) continue;
-
-        $valorIntegral = isset($row[$mapa['valor_integral']]) ? parseValorMonetario($row[$mapa['valor_integral']]) : 0;
-        if ($valorIntegral <= 0) continue;
-
-        $valorDesconto = null;
-        if ($mapa['valor_com_desconto'] !== null && isset($row[$mapa['valor_com_desconto']])) {
-            $vd = parseValorMonetario($row[$mapa['valor_com_desconto']]);
-            $valorDesconto = $vd > 0 ? $vd : null;
-        }
-
-        $desconto = '';
-        if ($mapa['desconto'] !== null && isset($row[$mapa['desconto']])) {
-            $desconto = trim((string)$row[$mapa['desconto']]);
-        }
-
-        $percentual = null;
-        if ($mapa['percentual'] !== null && isset($row[$mapa['percentual']])) {
-            $p = parseValorMonetario($row[$mapa['percentual']]);
-            $percentual = $p > 0 ? $p : null;
-        }
-
-        $duracao = '';
-        if ($mapa['duracao'] !== null && isset($row[$mapa['duracao']])) {
-            $duracao = trim((string)$row[$mapa['duracao']]);
-        }
-
-        $obs = '';
-        if ($mapa['observacoes'] !== null && isset($row[$mapa['observacoes']])) {
-            $obs = trim((string)$row[$mapa['observacoes']]);
-        }
+        $percentual = parseValor($row[7]);
+        $valorDesconto = parseValor($row[8]);
+        $regressao2 = parseValor($row[9]);
+        $regressaoDemais = parseValor($row[10]);
 
         $result[] = [
-            'nome' => $nome,
-            'duracao' => $duracao,
-            'valor_integral' => $valorIntegral,
+            'codigo' => trim((string)$row[0]),
+            'curso' => trim((string)$row[1]),
+            'duracao' => trim((string)$row[2]),
+            'grau' => trim((string)$row[3]),
+            'modalidade' => trim((string)$row[4]),
+            'canal' => trim((string)$row[5]),
+            'preco_siaa' => $preco,
+            'desconto' => $percentual,
             'valor_com_desconto' => $valorDesconto,
-            'desconto' => $desconto,
-            'percentual' => $percentual,
-            'observacoes' => $obs,
+            'regressao_2sem' => $regressao2,
+            'regressao_demais' => $regressaoDemais
         ];
     }
 
@@ -332,77 +252,84 @@ function processarExcel($arquivo) {
 }
 
 /**
- * Processa arquivo CSV
+ * Processa CSV
  */
 function processarCSV($arquivo) {
-    $dados = [];
     $handle = fopen($arquivo, 'r');
-
-    // Detecta separador
     $primeiraLinha = fgets($handle, 4096);
     $sep = (substr_count($primeiraLinha, ';') > substr_count($primeiraLinha, ',')) ? ';' : ',';
     rewind($handle);
 
     $cabecalho = fgetcsv($handle, 0, $sep);
-    if (!$cabecalho) {
-        fclose($handle);
-        return [];
-    }
+    if (!$cabecalho) { fclose($handle); return []; }
 
-    $mapa = detectarMapeamento($cabecalho);
-
-    if ($mapa['nome'] === null || $mapa['valor_integral'] === null) {
-        fclose($handle);
-        return [];
-    }
-
+    $result = [];
     while (($row = fgetcsv($handle, 0, $sep)) !== false) {
-        if (count($row) < 2) continue;
+        if (count($row) < 9 || empty($row[1])) continue;
 
-        $nome = isset($row[$mapa['nome']]) ? trim((string)$row[$mapa['nome']]) : '';
-        if ($nome === '' || preg_match('/(filtro|total|subtotal|soma)/i', $nome)) continue;
-
-        $valorIntegral = isset($row[$mapa['valor_integral']]) ? parseValorMonetario($row[$mapa['valor_integral']]) : 0;
-        if ($valorIntegral <= 0) continue;
-
-        $valorDesconto = null;
-        if ($mapa['valor_com_desconto'] !== null && isset($row[$mapa['valor_com_desconto']])) {
-            $vd = parseValorMonetario($row[$mapa['valor_com_desconto']]);
-            $valorDesconto = $vd > 0 ? $vd : null;
-        }
-
-        $desconto = '';
-        if ($mapa['desconto'] !== null && isset($row[$mapa['desconto']])) {
-            $desconto = trim((string)$row[$mapa['desconto']]);
-        }
-
-        $percentual = null;
-        if ($mapa['percentual'] !== null && isset($row[$mapa['percentual']])) {
-            $p = parseValorMonetario($row[$mapa['percentual']]);
-            $percentual = $p > 0 ? $p : null;
-        }
-
-        $duracao = '';
-        if ($mapa['duracao'] !== null && isset($row[$mapa['duracao']])) {
-            $duracao = trim((string)$row[$mapa['duracao']]);
-        }
-
-        $obs = '';
-        if ($mapa['observacoes'] !== null && isset($row[$mapa['observacoes']])) {
-            $obs = trim((string)$row[$mapa['observacoes']]);
-        }
-
-        $dados[] = [
-            'nome' => $nome,
-            'duracao' => $duracao,
-            'valor_integral' => $valorIntegral,
-            'valor_com_desconto' => $valorDesconto,
-            'desconto' => $desconto,
-            'percentual' => $percentual,
-            'observacoes' => $obs,
+        $result[] = [
+            'codigo' => trim((string)$row[0]),
+            'curso' => trim((string)$row[1]),
+            'duracao' => trim((string)$row[2]),
+            'grau' => trim((string)$row[3]),
+            'modalidade' => trim((string)$row[4]),
+            'canal' => trim((string)$row[5]),
+            'preco_siaa' => parseValor($row[6]),
+            'desconto' => parseValor($row[7]),
+            'valor_com_desconto' => parseValor($row[8]),
+            'regressao_2sem' => parseValor($row[9] ?? ''),
+            'regressao_demais' => parseValor($row[10] ?? '')
         ];
     }
 
     fclose($handle);
-    return $dados;
+    return $result;
+}
+
+/**
+ * Wrapper para requests Supabase com método DELETE via POST
+ */
+function supabaseRequest($method, $endpoint, $data = null, $returnRaw = false) {
+    $url = SUPABASE_URL . '/rest/v1/' . $endpoint;
+
+    $headers = [
+        'apikey: ' . SUPABASE_KEY,
+        'Authorization: Bearer ' . SUPABASE_KEY,
+        'Content-Type: application/json',
+        'Prefer: return=representation'
+    ];
+
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+
+    switch ($method) {
+        case 'GET':
+            break;
+        case 'POST':
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+            break;
+        case 'DELETE':
+            curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'DELETE');
+            break;
+    }
+
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    return [
+        'status' => $httpCode,
+        'data' => json_decode($response, true)
+    ];
+}
+
+function registrarUpload($nomeArquivo, $tipo, $registros) {
+    supabaseRequest('POST', 'uploads', [
+        'nome_arquivo' => $nomeArquivo,
+        'tipo_planilha' => $tipo,
+        'registros_inseridos' => $registros
+    ]);
 }

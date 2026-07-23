@@ -4,11 +4,11 @@ Sistema para consulta de valores de mensalidades de graduação e pós-graduaç�
 
 ## Funcionalidades
 
-- 📊 Visualização de cursos em cards
-- 🔍 Busca por nome do curso
-- 📁 Upload de planilhas Excel/CSV
-- 💰 Valores com e sem desconto
-- 📱 Layout responsivo
+- Visualização de cursos em cards com valores integrais
+- Múltiplos canais de desconto por curso
+- Busca por nome do curso
+- Upload de planilhas Excel/CSV
+- Layout responsivo
 
 ## Estrutura do Projeto
 
@@ -20,20 +20,18 @@ sistema-mensalidades/
 │   ├── cursos.php         # API de cursos
 │   ├── buscar.php         # Busca de cursos
 │   └── uploads.php        # Histórico de uploads
-├── public/                 # Frontend
-│   ├── index.html         # Página principal
-│   ├── admin.html         # Painel administrativo
-│   ├── css/style.css      # Estilos
-│   └── js/
-│       ├── app.js         # Lógica principal
-│       └── admin.js       # Lógica admin
+├── index.html             # Página principal
+├── admin.html             # Painel administrativo
+├── css/style.css          # Estilos
+├── js/app.js              # Lógica principal
+├── js/admin.js            # Lógica admin
 ├── vercel.json            # Configuração Vercel
 └── composer.json          # Dependências PHP
 ```
 
 ## Configuração do Supabase
 
-Execute este SQL no painel do Supabase para criar as tabelas:
+Execute este SQL no painel do Supabase (SQL Editor):
 
 ```sql
 -- Tabela de cursos
@@ -42,13 +40,22 @@ CREATE TABLE cursos (
   tipo VARCHAR(20) NOT NULL,
   nome_curso VARCHAR(255) NOT NULL,
   duracao VARCHAR(50),
+  grau VARCHAR(100),
+  modalidade VARCHAR(100),
   valor_integral DECIMAL(10,2) NOT NULL,
-  valor_com_desconto DECIMAL(10,2),
-  desconto_aplicado VARCHAR(100),
-  percentual_desconto DECIMAL(5,2),
-  observacoes TEXT,
   data_upload TIMESTAMP DEFAULT NOW(),
   ativo BOOLEAN DEFAULT TRUE
+);
+
+-- Tabela de canais de desconto
+CREATE TABLE canais_desconto (
+  id SERIAL PRIMARY KEY,
+  curso_id INTEGER REFERENCES cursos(id) ON DELETE CASCADE,
+  canal VARCHAR(255) NOT NULL,
+  percentual_desconto DECIMAL(5,4),
+  valor_com_desconto DECIMAL(10,2),
+  regressao_2sem DECIMAL(5,4),
+  regressao_demais DECIMAL(5,4)
 );
 
 -- Tabela de uploads
@@ -60,26 +67,28 @@ CREATE TABLE uploads (
   data_upload TIMESTAMP DEFAULT NOW()
 );
 
--- Habilitar RLS (Row Level Security)
+-- Habilitar RLS
 ALTER TABLE cursos ENABLE ROW LEVEL SECURITY;
+ALTER TABLE canais_desconto ENABLE ROW LEVEL SECURITY;
 ALTER TABLE uploads ENABLE ROW LEVEL SECURITY;
 
--- Política para leitura pública
-CREATE POLICY "Leitura pública de cursos" ON cursos
-  FOR SELECT USING (ativo = true);
+-- Políticas de leitura pública
+CREATE POLICY "Leitura pública cursos" ON cursos FOR SELECT USING (true);
+CREATE POLICY "Leitura pública canais" ON canais_desconto FOR SELECT USING (true);
+CREATE POLICY "Leitura uploads" ON uploads FOR SELECT USING (true);
 
--- Política para inserção (apenas com service key)
-CREATE POLICY "Inserção autenticada" ON cursos
-  FOR INSERT WITH CHECK (true);
+-- Políticas de inserção/atualização
+CREATE POLICY "Inserção cursos" ON cursos FOR INSERT WITH CHECK (true);
+CREATE POLICY "Atualização cursos" ON cursos FOR UPDATE USING (true);
+CREATE POLICY "Inserção canais" ON canais_desconto FOR INSERT WITH CHECK (true);
+CREATE POLICY "Delete canais" ON canais_desconto FOR DELETE USING (true);
+CREATE POLICY "Inserção uploads" ON uploads FOR INSERT WITH CHECK (true);
 
-CREATE POLICY "Atualização autenticada" ON cursos
-  FOR UPDATE USING (true);
-
-CREATE POLICY "Leitura de uploads" ON uploads
-  FOR SELECT USING (true);
-
-CREATE POLICY "Inserção de uploads" ON uploads
-  FOR INSERT WITH CHECK (true);
+-- Índices para performance
+CREATE INDEX idx_cursos_tipo ON cursos(tipo);
+CREATE INDEX idx_cursos_ativo ON cursos(ativo);
+CREATE INDEX idx_cursos_nome ON cursos(nome_curso);
+CREATE INDEX idx_canais_curso_id ON canais_desconto(curso_id);
 ```
 
 ## Deploy na Vercel
@@ -112,18 +121,22 @@ Acesse o link principal para ver todos os cursos.
 ### Painel Administrativo
 Acesse `/admin?senha=SUA_SENHA` para fazer upload de planilhas.
 
-## Formato das Planilhas
+## Formato da Planilha
 
-A planilha deve conter estas colunas (cabeçalho na primeira linha):
+Colunas esperadas (cabeçalho na primeira linha):
 
 | Coluna | Descrição |
 |--------|-----------|
-| nome_curso ou curso | Nome do curso |
-| duracao | Duração do curso |
-| valor_integral | Valor mensal integral |
-| valor_com_desconto | Valor com desconto |
-| desconto_aplicado ou desconto | Nome do desconto/cota |
-| percentual_desconto | Percentual de desconto |
-| observacoes | Observações adicionais |
+| CÓDIGO | Código do curso |
+| CURSOS | Nome do curso |
+| DURAÇÃO | Duração em meses |
+| GRAU | Bacharelado, Licenciatura, etc. |
+| SUBMODALIDADE | Ao Vivo, Digital, Semipresencial |
+| CANAL | Canal de venda/desconto |
+| PREÇO SIAA | Valor mensal integral |
+| DESCONTO 1 SEMESTRE | Percentual decimal (0.15 = 15%) |
+| VALOR COM DESCONTO | Valor mensal com desconto |
+| REGRESSÃO A PARTIR DO 2 SEMESTRE | Percentual 2º semestre |
+| REGRESSÃO DEMAIS SEMESTRES | Percentual demais semestres |
 
-**Separador CSV:** ponto e vírgula (;)
+**Separador CSV:** ponto e vírgula (;) ou vírgula (,)
